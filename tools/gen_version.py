@@ -96,7 +96,7 @@ def get_version_info(build_type=None):
         "build_time": datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%d %H:%M:%S UTC"
         ),
-        "title": full if custom else base,
+        "title": "Webkit Autoloader",
     }
 
 
@@ -136,8 +136,7 @@ def main(argv=None):
 
     write_if_changed(HEADER, header_text(info).encode("utf-8"))
 
-    # PS5 homescreen app metadata — title gets the base version (or the full
-    # custom version) so the app label reflects what was built.
+    # Keep the PS5 homescreen tile name stable across versioned builds.
     with open(PARAM_TEMPLATE, "rb") as f:
         param = f.read()
     write_if_changed(
