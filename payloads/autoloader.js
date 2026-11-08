@@ -2,8 +2,8 @@
 //
 // 1. Checks if an ELF loader daemon is already listening on loopback port 9021.
 // 2. Checks if the process is already jailbroken (uid 0).
-// 3. If exploit is needed, automatically selects between relapse.lua and poops.js
-//    based on firmware version and network interface status (matching ps5-lua-autoloader).
+// 3. If exploit is needed, selects between relapse.lua and poops.js based on
+//    network interface status; this build is configured for firmware 10.01.
 // 4. Pre-fetches all needed assets before kernel exploit runs.
 // 5. Executes the chosen exploit via api.executePayload().
 // 6. Executes autoload.js to stage and stream the target ELF to elfldr on 9021.
@@ -51,47 +51,9 @@ async function isJailbroken(api) {
   }
 }
 
-function selectExploit(api) {
-  let fw = 0;
-  let fwExact = "";
-
-  const params = typeof location !== "undefined" && location.search
-    ? new URLSearchParams(location.search) : null;
-  const fwArg = params ? params.get("fw") : null;
-
-  let match = typeof navigator !== "undefined" && navigator.userAgent
-    ? /PlayStation 5\/(\d+\.\d+)/.exec(navigator.userAgent) : null;
-  if (!match && fwArg) {
-    match = ["PlayStation 5/" + fwArg, fwArg];
-  }
-
-  if (match) {
-    fw = parseFloat(match[1]);
-    fwExact = match[1];
-  } else if (typeof api.fw === "string" && api.fw !== "unknown") {
-    fw = parseFloat(api.fw);
-    fwExact = api.fw;
-  }
-
-  const is905 = fwExact === "9.05" || Math.abs(fw - 9.05) < 0.001;
+function selectExploit() {
   const isOnline = typeof navigator !== "undefined" && !!navigator.onLine;
 
-  if (fw > 12.00 && fw <= 13.60) {
-    return {
-      file: "payloads/lua/relapse.lua",
-      fallback: "relapse.lua",
-      args: ["compat=remote_lua_loader"],
-      reason: "FW > 12.00 requires Relapse",
-    };
-  }
-  if (is905) {
-    return {
-      file: "payloads/poops.js",
-      fallback: "poops.js",
-      args: [],
-      reason: "FW 9.05 requires Poops",
-    };
-  }
   if (isOnline) {
     return {
       file: "payloads/lua/relapse.lua",
@@ -104,7 +66,7 @@ function selectExploit(api) {
     file: "payloads/poops.js",
     fallback: "poops.js",
     args: [],
-    reason: "offline mode (FW <= 12.00)",
+    reason: "offline mode",
   };
 }
 
@@ -140,7 +102,7 @@ return async function (api) {
   }
 
   // Step 3: Determine which exploit to run
-  const choice = selectExploit(api);
+  const choice = selectExploit();
   await api.log(`[*] Auto-dispatch: selected ${choice.file} (${choice.reason})`, "info");
 
   // Step 4: Pre-fetch all needed resources BEFORE kernel exploit runs

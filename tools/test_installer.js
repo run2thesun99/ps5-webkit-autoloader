@@ -1,9 +1,9 @@
 // Exercise cache completion, failures, repair and the pointer without a PS5.
 //
-// The installer automatically caches both exploit pages on supported firmwares
+// The installer automatically caches the standalone autoloader payload
 // without requiring manual user selection. When the cache completes, the homescreen
 // shortcut is installed. The pointer then automatically dispatches to relapse.html
-// or poops.html at runtime based on firmware version and network status.
+// and selects the exploit based on network availability without checking firmware.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
@@ -85,10 +85,10 @@ function setup(file, options = {}) {
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 const runInstaller = options => setup('frontend/installer-page/index.html',
-  { fw: '11.00', ...options });
+  { fw: '10.01', ...options });
 
 (async () => {
-  // 1. On supported firmware, cache completion is enough to install automatically.
+  // 1. Cache completion is enough to install automatically.
   for (const event of ['cached', 'noupdate', 'updateready']) {
     for (const status of [4, 5]) {
       const test = runInstaller({ status });
@@ -110,15 +110,15 @@ const runInstaller = options => setup('frontend/installer-page/index.html',
 
   // Successful install clears both pending and legacy exploit keys.
   const rerun = setup('frontend/installer-page/index.html',
-    { fw: '11.00', seed: { wkal_exploit: 'poops', wkal_pending: 'relapse' } });
+    { fw: '10.01', seed: { wkal_exploit: 'poops', wkal_pending: 'relapse' } });
   rerun.listeners.cached();
   await flush();
   assert.equal(rerun.saved.get('wkal_pending'), undefined, 'pending must be cleared');
   assert.equal(rerun.saved.get('wkal_exploit'), undefined, 'legacy exploit key must be cleared');
 
   // 2. On bare load, caching starts immediately without user prompt or clicks.
-  const bare = setup('frontend/installer-page/index.html', { fw: '11.00' });
-  assert(Object.keys(bare.listeners).length > 0, 'caching must start immediately on supported firmware');
+  const bare = setup('frontend/installer-page/index.html', { fw: '10.01' });
+  assert(Object.keys(bare.listeners).length > 0, 'caching must start immediately');
   assert.equal(bare.nodes.progress.hidden, false);
   assert.equal(bare.logRequests[0].path, '/logs?pos=0');
   bare.logRequests[0].status = 200;
@@ -127,17 +127,13 @@ const runInstaller = options => setup('frontend/installer-page/index.html',
   assert.equal(bare.nodes.logContainer.hidden, false);
   assert.match(bare.nodes.logContainer.textContent, /Caching content/);
 
-  // 3. Unsupported firmware refuses outright and signals /exit to the server
+  // 3. Firmware values do not block installer caching.
   const unsupported = setup('frontend/installer-page/index.html', { fw: '5.50' });
-  assert.match(unsupported.nodes.status.textContent, /Unsupported/);
-  assert.equal(Object.keys(unsupported.listeners).length, 0, 'unsupported firmware must not start caching');
-  assert(unsupported.requests.includes('/exit'), 'unsupported firmware must signal /exit');
+  assert(Object.keys(unsupported.listeners).length > 0, 'firmware must not block caching');
 
-  // Desktop preview testing via ?fw= parameter:
+  // Desktop preview also proceeds without a firmware parameter.
   const desktopUnsupported = setup('frontend/installer-page/index.html', { ua: 'Mozilla/5.0', search: '?fw=5.50' });
-  assert.match(desktopUnsupported.nodes.status.textContent, /Unsupported/);
-  assert.equal(Object.keys(desktopUnsupported.listeners).length, 0);
-  assert(desktopUnsupported.requests.includes('/exit'));
+  assert(Object.keys(desktopUnsupported.listeners).length > 0);
 
   // 4. Failed install reports error and offers repair.
   const failed = runInstaller({ requestFails: true });
@@ -230,7 +226,7 @@ const runInstaller = options => setup('frontend/installer-page/index.html',
 
   // 10. The pointer redirects only on a complete cache to the unified index.html.
   for (const incomplete of [false, true]) {
-    const pointer = setup('frontend/pointer/index.html', { incomplete, fw: '11.00', onLine: true });
+    const pointer = setup('frontend/pointer/index.html', { incomplete, fw: '10.01', onLine: true });
     await flush();
     assert.equal(pointer.target(), incomplete ? undefined : '/app/test-version/index.html');
     if (incomplete) assert.match(pointer.nodes.status.textContent, /incomplete/);
@@ -238,18 +234,16 @@ const runInstaller = options => setup('frontend/installer-page/index.html',
 
   const pUnsupported = setup('frontend/pointer/index.html', { fw: '5.50' });
   await flush();
-  assert.equal(pUnsupported.target(), undefined);
-  assert.match(pUnsupported.nodes.status.textContent, /Unsupported/);
+  assert.equal(pUnsupported.target(), '/app/test-version/index.html');
 
   // Desktop preview testing via ?fw= query parameter:
-  const pDesk = setup('frontend/pointer/index.html', { ua: 'Mozilla/5.0', search: '?fw=11.00' });
+  const pDesk = setup('frontend/pointer/index.html', { ua: 'Mozilla/5.0', search: '?fw=10.01' });
   await flush();
-  assert.equal(pDesk.target(), '/app/test-version/index.html?fw=11.00', '?fw=11.00 desktop preserves fw parameter');
+  assert.equal(pDesk.target(), '/app/test-version/index.html', 'pointer does not depend on a firmware parameter');
 
   const pDeskUnsupported = setup('frontend/pointer/index.html', { ua: 'Mozilla/5.0', search: '?fw=5.50' });
   await flush();
-  assert.equal(pDeskUnsupported.target(), undefined, '?fw=5.50 desktop must not redirect');
-  assert.match(pDeskUnsupported.nodes.status.textContent, /Unsupported/);
+  assert.equal(pDeskUnsupported.target(), '/app/test-version/index.html', '?fw=5.50 does not block redirect');
 
   console.log('Installer checks passed: cache events, marker, automatic caching, errors, repair and pointer.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -37,21 +37,6 @@ atomic_int install_completed = 0;
  * visible to the main loop. */
 atomic_int webkit_data_cleared = 0;
 
-/* Which chains this request's firmware supports: 1 = Poops, 2 = Relapse, 3 = both.
- * Read from the User-Agent, or a ?fw= argument for desktop testing. Recomputed
- * per request and never stored: a remembered choice was what got wiped
- * mid-download and came back stale in earlier revisions. */
-static int supported_chains(struct MHD_Connection *conn) {
-    const char *ua = MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "User-Agent");
-    const char *ps5 = ua ? strstr(ua, "PlayStation 5/") : NULL;
-    const char *fw_arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "fw");
-    float fw = ps5 ? strtof(ps5 + 14, NULL) : (fw_arg ? strtof(fw_arg, NULL) : 0);
-    if (fw == 0) return 3; /* desktop preview */
-    int poops = fw >= 7 && fw <= 12;
-    int relapse = fw >= 7 && fw <= 13.60f && fw != 9.05f;
-    return poops | (relapse << 1);
-}
-
 static void add_cors_headers(struct MHD_Response *resp) {
     MHD_add_response_header(resp, "Access-Control-Allow-Origin", CORS_ORIGIN);
 }
@@ -93,15 +78,8 @@ enum MHD_Result http_on_request(void *cls, struct MHD_Connection *conn,
 
     struct MHD_Response *resp = NULL;
     int http_status = MHD_HTTP_OK;
-    /* Whether this request may start caching. Decided from the request alone --
-     * the User-Agent -- so nothing is remembered between requests. The entry page
-     * is served without its manifest attribute on unsupported firmwares, stopping
-     * AppCache before it begins. Supported firmwares cache the autoloader page
-     * immediately without requiring manual user selection.
-     */
-    int chains = supported_chains(conn);
-    int cache_allowed = chains != 0;
-    int entry_page = strcmp(url, ROUTE_INDEX) == 0 || strcmp(url, ROUTE_INDEX_HTML) == 0;
+    /* The manifest is served as-is; firmware detection is left to the payload
+     * runtime and is not used to block caching or installation. */
 
     if (strcmp(url, ROUTE_INSTALL) == 0) {
         /* Called by the installer page once the AppCache is fully cached. The
@@ -234,23 +212,6 @@ enum MHD_Result http_on_request(void *cls, struct MHD_Connection *conn,
 
             /* Test simulation hook (no-op unless compiled with SIMULATE=1|2) */
             simulate_corrupt_manifest(url, &payload, &payload_size, &mem_mode);
-
-            /* Removing the manifest attribute stops AppCache from starting
-             * on unsupported firmwares. */
-            if (entry_page && !cache_allowed) {
-                char *copy = malloc(payload_size + 64);
-                if (!copy) {
-                    if (mem_mode == MHD_RESPMEM_MUST_FREE) free(payload);
-                    return MHD_NO;
-                }
-                memcpy(copy, payload, payload_size);
-                copy[payload_size] = '\0';
-                if (mem_mode == MHD_RESPMEM_MUST_FREE) free(payload);
-                payload = copy;
-                mem_mode = MHD_RESPMEM_MUST_FREE;
-                char *attribute = strstr(copy, " manifest=\"/cache.appcache\"");
-                if (attribute) memset(attribute, ' ', strlen(" manifest=\"/cache.appcache\""));
-            }
 
             resp = MHD_create_response_from_buffer(payload_size, payload,
                                                    mem_mode);

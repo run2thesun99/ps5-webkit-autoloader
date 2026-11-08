@@ -6,7 +6,7 @@ served normally via HTTP or cached individually via AppCache:
   - index.html (lightweight entry page from frontend/autoloader/index.html)
   - style.css, app.js
   - src/ (runtime scripts from remote-loader)
-  - offsets/ (firmware offset files)
+  - offsets/ (10.01 firmware offsets only)
   - shared/ (shellcode and elfldr daemon)
   - payloads/ (autoloader orchestrator, poops.js, relapse.lua, autoload.js)
   - <target>.elf (payload binary)
@@ -63,13 +63,25 @@ def main():
 
     # 1. Clean / create destination directories
     os.makedirs(os.path.join(output_dir, "src"), exist_ok=True)
-    os.makedirs(os.path.join(output_dir, "offsets"), exist_ok=True)
+    offsets_dir = os.path.join(output_dir, "offsets")
+    if os.path.isdir(offsets_dir):
+        shutil.rmtree(offsets_dir)
+    os.makedirs(offsets_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, "shared"), exist_ok=True)
     os.makedirs(os.path.join(output_dir, "payloads", "lua"), exist_ok=True)
 
     # 2. Copy modular engine files from remote-loader
     copy_tree(os.path.join(loader_dir, "src"), os.path.join(output_dir, "src"))
-    copy_tree(os.path.join(loader_dir, "offsets"), os.path.join(output_dir, "offsets"))
+    shutil.copy2(
+        os.path.join(loader_dir, "offsets", "10.01.js"),
+        os.path.join(offsets_dir, "10.01.js"),
+    )
+    # Pin the runtime to the single bundled offset table. This is a build
+    # configuration, not a firmware check: the payload always loads 10.01.
+    shutil.copy2(
+        os.path.join(repo_root, "frontend", "autoloader", "firmware.js"),
+        os.path.join(output_dir, "src", "firmware.js"),
+    )
     copy_tree(os.path.join(loader_dir, "shared"), os.path.join(output_dir, "shared"))
 
     # 3. Copy shared binaries

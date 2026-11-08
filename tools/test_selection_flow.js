@@ -2,25 +2,14 @@
 // payloads/autoloader.js as a unified orchestrator. At runtime:
 //   1. It probes 127.0.0.1:9021 for an active ELF loader.
 //   2. It probes if the process is already jailbroken (uid 0).
-//   3. If exploit is needed, it auto-dispatches based on FW and network:
-//      - FW > 12.00 and FW <= 13.60 -> relapse.lua
-//      - FW == 9.05 -> poops.js
-//      - Active network connection (navigator.onLine) -> relapse.lua
-//      - Otherwise (offline, FW <= 12.00) -> poops.js
+//   3. If exploit is needed, it auto-dispatches based on network status on FW 10.01.
 //   4. It dynamically executes the chosen exploit via api.executePayload().
 //   5. It dynamically executes autoload.js to stream autoload.elf to elfldr.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-const FW = [
-  // fw,      poops, relapse  (as computed by the firmware checks)
-  ['7.00', true, true], ['7.61', true, true], ['8.60', true, true],
-  ['9.00', true, true], ['9.05', true, false], ['9.60', true, true],
-  ['10.01', true, true], ['11.00', true, true], ['11.40', true, true],
-  ['12.00', true, true], ['12.02', false, true], ['12.70', false, true],
-  ['13.00', false, true], ['13.60', false, true],
-];
+const FW = [['10.01', true, true]];
 
 /* ---- installer page: frontend/installer-page/index.html ------------------- */
 
@@ -131,27 +120,18 @@ function testSelectExploit(options) {
 }
 
 (async () => {
-  // 1. All supported firmwares start caching immediately on bare load without
-  //    requiring user interaction or manual selection.
-  for (const [fw] of FW) {
-    const page = loadPage({ fw });
+  // 1. Installation starts without reading or validating firmware.
+  for (const fw of ['5.50', '10.01', '14.00', null]) {
+    const page = loadPage(fw ? { fw } : {});
     assert(Object.keys(page.listeners).length > 0,
-      fw + ': caching must start immediately without user intervention');
+      fw + ': caching must start without firmware validation');
     assert.equal(page.nodes.progress.hidden, false);
     assert.equal(page.logRequests[0].path, '/logs?pos=0');
   }
 
-  // 2. Unsupported firmware refuses outright and signals /exit to the server.
-  for (const deadFw of ['5.50', '6.72', '14.00']) {
-    const dead = loadPage({ fw: deadFw });
-    assert.match(dead.nodes.status.textContent, /Unsupported/);
-    assert.equal(Object.keys(dead.listeners).length, 0, deadFw + ': unsupported firmware must not cache');
-    assert(dead.requests.includes('/exit'), 'unsupported firmware must request /exit to stop the installer daemon');
-  }
-
   // 3. Cache completion finishes the installation and requests /install.
   for (const event of ['cached', 'noupdate', 'updateready']) {
-    const page = loadPage({ fw: '11.00' });
+    const page = loadPage({ fw: '10.01' });
     page.listeners[event]();
     await flush();
     assert.deepEqual(page.requests, ['/app/test-version/__complete__', '/install'],
@@ -160,51 +140,33 @@ function testSelectExploit(options) {
   }
 
   // 4. Pointer redirects directly to the single index.html on complete cache.
-  const pOnline = loadPointer({ fw: '11.00', onLine: true });
+  const pOnline = loadPointer({ fw: '10.01', onLine: true });
   await flush();
   assert.equal(pOnline.target(), '/app/test-version/index.html');
 
-  const pOffline = loadPointer({ fw: '11.00', onLine: false });
+  const pOffline = loadPointer({ fw: '10.01', onLine: false });
   await flush();
   assert.equal(pOffline.target(), '/app/test-version/index.html');
 
   const pDeskFw = loadPointer({ ua: 'Mozilla/5.0', search: '?fw=9.05' });
   await flush();
-  assert.equal(pDeskFw.target(), '/app/test-version/index.html?fw=9.05');
+  assert.equal(pDeskFw.target(), '/app/test-version/index.html');
 
-  for (const badFw of ['5.50', '6.72', '14.00']) {
-    const bad = loadPointer({ fw: badFw });
+  for (const fw of ['5.50', '14.00']) {
+    const bad = loadPointer({ fw });
     await flush();
-    assert.equal(bad.target(), undefined, badFw + ' must not redirect');
-    assert.match(bad.nodes.status.textContent, /Unsupported/);
+    assert.equal(bad.target(), '/app/test-version/index.html', fw + ' should pass without firmware validation');
   }
 
-  const incomplete = loadPointer({ fw: '11.00', incomplete: true });
+  const incomplete = loadPointer({ fw: '10.01', incomplete: true });
   await flush();
   assert.equal(incomplete.target(), undefined, 'Incomplete cache must not redirect');
   assert.match(incomplete.nodes.status.textContent, /incomplete/);
 
-  // 5. Automatic exploit dispatch logic in payloads/autoloader.js:
-  //    Rule 1: FW > 12.00 and FW <= 13.60 -> relapse.lua (both online and offline)
-  for (const fw of ['12.02', '12.70', '13.00', '13.60']) {
-    for (const onLine of [true, false]) {
-      const choice = testSelectExploit({ fw, onLine });
-      assert(choice.file.endsWith('relapse.lua'), fw + ' (onLine: ' + onLine + ') must choose relapse.lua');
-      assert.deepEqual([...choice.args], ['compat=remote_lua_loader'], 'relapse.lua must receive compat=remote_lua_loader');
-    }
-  }
-
-  //    Rule 2: FW == 9.05 -> poops.js (both online and offline)
-  for (const onLine of [true, false]) {
-    const choice = testSelectExploit({ fw: '9.05', onLine });
-    assert(choice.file.endsWith('poops.js'), '9.05 (onLine: ' + onLine + ') must choose poops.js');
-    assert.deepEqual([...choice.args], [], 'poops.js does not need compat args');
-  }
-
-  //    Rule 3 & 4: Dual-supported firmwares (7.00 - 12.00 except 9.05):
+  // 5. Automatic exploit dispatch logic ignores firmware and uses network status:
   //    Online -> relapse.lua (faster, reliable)
   //    Offline -> poops.js (works without network)
-  for (const fw of ['7.00', '7.61', '8.60', '9.00', '9.60', '10.01', '11.00', '11.40', '12.00']) {
+  for (const fw of ['5.50', '10.01', '14.00']) {
     const choiceOnline = testSelectExploit({ fw, onLine: true });
     assert(choiceOnline.file.endsWith('relapse.lua'), fw + ' online must choose relapse.lua');
     assert.deepEqual([...choiceOnline.args], ['compat=remote_lua_loader'], 'online relapse.lua must receive compat=remote_lua_loader');
@@ -213,15 +175,6 @@ function testSelectExploit(options) {
     assert(choiceOffline.file.endsWith('poops.js'), fw + ' offline must choose poops.js');
     assert.deepEqual([...choiceOffline.args], [], 'offline poops.js does not need compat args');
   }
-
-  //    Desktop query param ?fw= selection:
-  const desk905 = testSelectExploit({ ua: 'Mozilla/5.0', search: '?fw=9.05', onLine: true });
-  assert(desk905.file.endsWith('poops.js'));
-  assert.deepEqual([...desk905.args], []);
-
-  const desk1300 = testSelectExploit({ ua: 'Mozilla/5.0', search: '?fw=13.00', onLine: false });
-  assert(desk1300.file.endsWith('relapse.lua'));
-  assert.deepEqual([...desk1300.args], ['compat=remote_lua_loader']);
 
   // 6. Test the orchestrator execution flow in payloads/autoloader.js
   const AsyncFunction = (async function () {}).constructor;
@@ -317,24 +270,14 @@ function testSelectExploit(options) {
       'manifest should not contain obsolete poops.html or relapse.html');
   }
 
-  // 8. The server holds no selection state and gates manifest per request:
+  // 8. The server serves its manifest without firmware validation:
   const httpServer = fs.readFileSync('src/http_server.c', 'utf8');
   for (const gone of ['selected_exploit', 'active_exploit', '# selected exploit']) {
     assert(!httpServer.includes(gone), 'src/http_server.c still references ' + gone);
   }
   assert(!/^static atomic_int .*exploit/m.test(httpServer),
     'the server must not keep a remembered choice');
-  for (const present of [
-    'static int supported_chains(struct MHD_Connection *conn) {',
-    'int poops = fw >= 7 && fw <= 12;',
-    'int relapse = fw >= 7 && fw <= 13.60f && fw != 9.05f;',
-    'int cache_allowed = chains != 0;',
-    'if (entry_page && !cache_allowed) {',
-  ]) {
-    assert(httpServer.includes(present),
-      'src/http_server.c should still gate the manifest per request: ' + present);
-  }
+  assert(!httpServer.includes('supported_chains'), 'server must not check firmware');
 
-  console.log('Selection flow passed: automatic caching on all supported firmwares, ' +
-    'auto-dispatch in autoloader.js based on FW and network, single standalone index.html page.');
+  console.log('Selection flow passed: firmware-independent cache and exploit dispatch.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

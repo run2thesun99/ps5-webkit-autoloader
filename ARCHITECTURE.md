@@ -19,19 +19,18 @@ offsets, and binary payloads are pre-cached individually via HTML5 AppCache (`ca
 and requested via standard relative URLs. This keeps the JavaScript heap virtually empty
 when `src/webkit.js` starts, avoiding Out-Of-Memory (OOM) crashes on the PS5.
 
-The autoloader runs `payloads/autoloader.js` as its entry orchestrator payload:
+The autoloader runs `payloads/autoloader.js` as its entry orchestrator payload.
+This build is configured for PS5 firmware 10.01 (often written 10.0.1). The
+builder bundles only `offsets/10.01.js` and pins the runtime to that table; no
+firmware version check runs before caching or exploitation:
 
 1. `isElfldrRunning(api)` probes `127.0.0.1:9021` via loopback TCP connect. If an
    ELF loader is already accepting connections, the environment is already active:
    it logs success, skips the kernel exploit and autoload, and exits cleanly.
 2. `isJailbroken(api)` probes if the process already has root privileges (`uid 0`
    via `syscall(24)`). If already jailbroken, it skips the kernel exploit and autoload.
-3. If exploitation is needed, `selectExploit(api)` automatically selects the best
-   exploit based on firmware version and network status:
-   - **FW > 12.00 and FW <= 13.60**: `payloads/lua/relapse.lua` (Poops does not support > 12.00)
-   - **FW == 9.05**: `payloads/poops.js` (Relapse does not support 9.05)
-   - **Active network connection (`navigator.onLine`)**: `payloads/lua/relapse.lua` (faster, reliable)
-   - **Offline (FW <= 12.00)**: `payloads/poops.js` (works without active network connection)
+3. If exploitation is needed, `selectExploit()` automatically selects
+   `payloads/lua/relapse.lua` when online or `payloads/poops.js` when offline.
 4. The orchestrator pre-fetches the chosen exploit code, `payloads/autoload.js`, and the target
    payload ELF into memory *before* running the kernel exploit, ensuring no post-kernel network
    requests are needed.
@@ -45,23 +44,22 @@ The autoloader runs `payloads/autoloader.js` as its entry orchestrator payload:
 
 The installation and dispatch flow is fully automated:
 
-1. The installer page loads. On all supported firmwares (7.00–13.60), caching
-   starts immediately without user intervention or manual exploit pickers.
-2. The server withholds `manifest="/cache.appcache"` only when the requesting
-   firmware is unsupported, stopping AppCache before it begins. Supported
-   firmwares are served with the attribute immediately.
+1. The installer page loads and caching starts immediately without user
+   intervention or manual exploit pickers.
+2. The server serves the AppCache manifest without checking the requesting
+   firmware.
 3. The modular files are downloaded individually into AppCache.
 4. Once the cache completes, the page checks the `__complete__` marker and calls
    `/install` to create the homescreen shortcut.
 5. On subsequent launches from the homescreen, the pointer page (`/app/index.html`)
    checks cache completeness and navigates directly to `/app/<version>/index.html`.
 
-The server's only selection logic is deciding per request whether to include the
-`manifest="/cache.appcache"` attribute on `/index.html`. It stores no selection state
-in memory or C variables.
+The server serves `manifest="/cache.appcache"` on `/index.html` uniformly for every
+request. It does not inspect firmware or maintain exploit selection state.
 
-The upstream firmware table rejects unsupported firmware before running WebKit.
-Supported versions are the remote-loader offset tables in the 7.00–13.60 range.
+The 10.01 offsets are supplied by the pinned remote-loader submodule. The build
+copies only that offset file and replaces its firmware detector with a fixed
+10.01 runtime setting, while leaving installation and caching ungated.
 Poops works without an active network interface; Relapse needs a connected local
 network interface, but no Internet access.
 
@@ -69,8 +67,7 @@ network interface, but no Internet access.
 
 `Makefile` calls the upstream builders without transforming their output:
 
-- `make page`: verify/download dependencies, then call `tools/build_standalone.py`
-  with `payloads/autoloader.js::<payload_elf>`, `--elfldr`, and `--embed` for
+- `make page`: stage the modular runtime and 10.01 offsets, then include
   `poops.js`, `relapse.lua`, `autoload.js`, and the payload ELF.
   Output: `build/autoloader/index.html`.
 - `make all`: stage the installer page, stable pointer and generated HTML; generate
@@ -134,8 +131,8 @@ the installer ELF for the PC setup host) is embedded via `--embed`.
 
 ## Offline installation
 
-The installer serves on `127.0.0.1:18181` only. On all supported firmwares
-(7.00–13.60), caching begins immediately without manual selection prompts. The
+The installer serves on `127.0.0.1:18181` only. Caching begins immediately
+without manual selection prompts. The
 page displays AppCache download progress and calls `/install` once caching completes
 (`cached`, `noupdate`, or `updateready`). The unified autoloader page (`index.html`)
 is cached. The installer validates the version marker before creating the homescreen
@@ -155,8 +152,7 @@ The cache layout is:
 
 The pointer checks the marker before navigating, then navigates to `/app/<version>/index.html`.
 Partial cache downloads cannot start the app. The HTTP server serves the standalone
-page verbatim. It withholds the installer's manifest attribute only when the requesting
-firmware is unsupported, stopping AppCache before it begins.
+page verbatim. The page checks the completion marker before installing the shortcut.
 
 `SIMULATE=1|2` and `tools/build_cache_corruption_test_elfs.sh` are available for
 hardware testing of failed-cache repair.
@@ -179,10 +175,9 @@ socket writes, the missing-`krw` refusal and cleanup on failure.
 `tools/test_installer.js` checks the installer's cache events, the marker gate,
 immediate automatic caching on bare load, error handling, repair confirmation and
 pointer redirection.
-`tools/test_selection_flow.js` checks that automatic caching begins across all
-supported firmwares, that unsupported firmwares are gated and rejected, that the
-pointer routes to `index.html`, that `selectExploit()` in `autoloader.js` automatically
-selects the optimal exploit based on firmware and network status, that the orchestrator
+`tools/test_selection_flow.js` checks that automatic caching begins without firmware
+validation, that the pointer routes to `index.html`, that `selectExploit()` in
+`autoloader.js` selects the exploit based on network status, that the orchestrator
 skips when elfldr/root is already active, and that the single standalone `index.html`
 page is staged and cached.
 
