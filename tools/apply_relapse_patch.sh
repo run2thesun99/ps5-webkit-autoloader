@@ -74,6 +74,14 @@ else
     exit 1
 fi
 
+# This build targets PS5 firmware 10.01 only.
+find "$DEST/offsets" -type f ! -name '10.01.js' -delete
+cat > "$DEST/src/firmware.js" <<'EOF'
+"use strict";
+window.fw_str = "10.01";
+window.firmware = { rejection() { return null; } };
+EOF
+
 # 5. Sanity check: the patched sources must carry our integration markers, the
 #    bundled elfldr and kexp must be gone, the runtime offsets URL must
 #    be the pinned one, and kexp must run via KXP2 without binary patching.

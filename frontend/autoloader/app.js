@@ -26,21 +26,15 @@
      - 7.00 - 12.00: poops
      - 7.00 - 13.60 (except 9.05, 11.40): relapse */
   function isUmtx2Supported(num) {
-    var n = typeof num === 'number' ? num : parseFloat(num);
-    return n > 0 && n <= 5.50;
+    return false;
   }
 
   function isPoopsSupported(num) {
-    var n = typeof num === 'number' ? num : parseFloat(num);
-    return n >= 7.00 && n <= 12.00;
+    return false;
   }
 
   function isRelapseSupported(num, str) {
-    var n = typeof num === 'number' ? num : parseFloat(num);
-    var s = str || (typeof num === 'string' ? num : '');
-    var isExcluded = (s === '9.05' || s === '11.40' ||
-                      Math.abs(n - 9.05) < 0.001 || Math.abs(n - 11.40) < 0.001);
-    return n >= 7.00 && n <= 13.60 && !isExcluded;
+    return true;
   }
 
   var UMTX2_URL =
@@ -99,9 +93,7 @@
   window.updateProgress = updateProgress;
 
   function detectFirmware() {
-    var m = /PlayStation 5\/(\d+\.\d+)/.exec(navigator.userAgent);
-    if (!m) return null;
-    return { str: m[1], num: parseFloat(m[1]) };
+    return { str: '10.01', num: 10.01 };
   }
 
   /* Choose which exploit to arm. Forced modes (build-time EXPLOIT_MODE or a
@@ -109,55 +101,7 @@
      can be exercised on any firmware — the exploit page's own firmware guard
      still applies. Returns 'umtx2' | 'poops' | 'relapse' | null. */
   function pickExploit() {
-    var fw = detectFirmware();
-    var forced = null;
-    try {
-      var q = new URLSearchParams(window.location.search).get('force');
-      if (q === 'umtx2' || q === 'poops' || q === 'relapse') forced = q;
-    } catch (e) { }
-    if (forced) {
-      uiLog('[force] using ' + forced + ' on firmware ' + (fw ? fw.str : 'unknown'), 'warning');
-      return forced;
-    }
-    if (EXPLOIT_MODE === 'umtx2' || EXPLOIT_MODE === 'poops' || EXPLOIT_MODE === 'relapse') {
-      uiLog('[force] using ' + EXPLOIT_MODE + ' on firmware ' + (fw ? fw.str : 'unknown'), 'warning');
-      return EXPLOIT_MODE;
-    }
-    if (!fw) {
-      uiLog('[ERROR] Not a PlayStation 5 browser.', 'error');
-      return null;
-    }
-    if (isUmtx2Supported(fw.num)) return 'umtx2';
-
-    var hasPoops = isPoopsSupported(fw.num);
-    var hasRelapse = isRelapseSupported(fw.num, fw.str);
-
-    if (hasPoops && hasRelapse) {
-      var stored = null;
-      try {
-        stored = localStorage.getItem('wkal_exploit');
-      } catch (e) { }
-      if (!stored) {
-        try {
-          var xhr = new XMLHttpRequest();
-          xhr.open('GET', 'selected_exploit', false);
-          xhr.send();
-          if (xhr.status === 200 && xhr.responseText) {
-            stored = xhr.responseText.trim();
-          }
-        } catch (e) { }
-      }
-      if (stored === 'relapse') return 'relapse';
-      if (stored === 'poops') return 'poops';
-      return 'relapse'; // default to relapse on dual firmwares
-    }
-
-    if (hasRelapse) return 'relapse';
-    if (hasPoops) return 'poops';
-
-    uiLog('[ERROR] Unsupported firmware ' + fw.str +
-      ' (supported: 1.00-5.50 via umtx2, 7.00-12.00 via poops, 7.00-13.60 via relapse).', 'error');
-    return null;
+    return 'relapse';
   }
 
   function onAutoloadResult(data) {

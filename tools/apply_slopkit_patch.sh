@@ -67,6 +67,19 @@ else
     exit 1
 fi
 
+# Keep only the 10.01 offsets and pin the staged exploit to that firmware.
+find "$DEST/offsets" -type f ! -name '10.01.js' -delete
+python3 - "$DEST/slopkit/main.js" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+start = s.index("if (!navigator.userAgent.includes('PlayStation 5')) {")
+end = s.index("\nfunction find_worker", start)
+s = s[:start] + 'window.fw_str = "10.01";\nwindow.fw_float = 10.01;\n' + s[end:]
+p.write_text(s)
+PY
+
 # 4. Sanity check: the patched pages must carry our integration markers.
 #    Catches a silently truncated/empty patch. These markers only exist when
 #    the patch applied (they are not in pristine slopkit).

@@ -51,17 +51,18 @@ static const FileEntry *registry_lookup(const char *url) {
 }
 
 static inline int is_fw_umtx2(float fw) {
-    return fw > 0.0f && fw <= 5.50f;
+    (void)fw;
+    return 0;
 }
 
 static inline int is_fw_poops(float fw) {
-    return fw >= 7.00f && fw <= 12.00f;
+    (void)fw;
+    return 0;
 }
 
 static inline int is_fw_relapse(float fw, const char *fw_str) {
-    if (fw < 7.00f || fw > 13.60f) return 0;
-    if (fw_str && (strcmp(fw_str, "9.05") == 0 || strcmp(fw_str, "11.40") == 0)) return 0;
-    if ((fw >= 9.049f && fw <= 9.051f) || (fw >= 11.399f && fw <= 11.401f)) return 0;
+    (void)fw;
+    (void)fw_str;
     return 1;
 }
 
@@ -107,27 +108,8 @@ enum MHD_Result http_on_request(void *cls, struct MHD_Connection *conn,
     (void)version;
     (void)upload_data;
     (void)upload_data_size;
-    float fw = 0.0f;
-    char fw_str[16] = {0};
-    const char *ua = MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "User-Agent");
-    if (ua) {
-        const char *ps5 = strstr(ua, "PlayStation 5/");
-        if (ps5) {
-            size_t i = 0;
-            const char *p = ps5 + 14;
-            while ((p[i] >= '0' && p[i] <= '9') || p[i] == '.') {
-                if (i < sizeof(fw_str) - 1) fw_str[i] = p[i];
-                i++;
-            }
-            fw_str[i < sizeof(fw_str) ? i : sizeof(fw_str) - 1] = '\0';
-            fw = strtof(fw_str, NULL);
-        }
-    }
-    const char *fw_arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "fw");
-    if (fw == 0.0f && fw_arg) {
-        strncpy(fw_str, fw_arg, sizeof(fw_str) - 1);
-        fw = strtof(fw_arg, NULL);
-    }
+    float fw = 10.01f;
+    char fw_str[16] = "10.01";
     const char *exploit_arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "exploit");
     if (exploit_arg && (strcmp(exploit_arg, "poops") == 0 ||
                         strcmp(exploit_arg, "relapse") == 0 ||
